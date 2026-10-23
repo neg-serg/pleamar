@@ -178,8 +178,17 @@ impl Reader {
                 }
                 t
             } else {
-                let target = path.parent().unwrap_or(Path::new(".")).join(which);
-                target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?
+                // Relative to the importing file *as it was reached*, symlinks and all —
+                // which is what the documentation promises. Canonicalizing first made a
+                // scene loaded from ~/.config/pleamar (a symlink farm into a checkout)
+                // import the checkout's neighbours rather than its own, so a palette
+                // generated next to the live tree was never read. `..` is folded
+                // lexically, so one library reached by two routes is still one file.
+                let target = normalize(&path.parent().unwrap_or(Path::new(".")).join(which));
+                if !target.is_file() {
+                    return Err(CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {})", target.display())));
+                }
+                target
             };
             if self.open_stack.contains(&target) {
                 return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up importing itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
@@ -502,4 +511,25 @@ mod tests {
             assert!((got - expected(height)).abs() < 1e-2, "{id}: {got} and it had to be {}", expected(height));
         }
     }
+}
+
+/// The path with `.` and `..` folded lexically. Symlinks are **not** followed, so the
+/// result still names the file where the importing scene's own path does — that is the
+/// whole point: a scene loaded from `~/.config/pleamar` (a symlink farm into a
+/// checkout) imports what sits beside *that* path, not beside the checkout.
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
