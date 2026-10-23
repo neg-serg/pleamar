@@ -76,7 +76,7 @@ impl Reader {
     fn open(&mut self, path: &Path) -> Result<Vec<tree::Entry>, CompileError> {
         let k = self.files.len();
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_owned());
-        let source = match self.unsaved.iter().find(|(r, _)| *r == canonical) {
+        let source = match self.unsaved.iter().find(|(r, _)| *r == canonical || *r == path) {
             Some((_, t)) => t.clone(),
             None => std::fs::read_to_string(path).map_err(|e| CompileError::at(0, 0, format!("cannot read {}: {e}", path.display())))?,
         };
@@ -114,8 +114,10 @@ impl Reader {
             let (Some(TokenKind::Str(which)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
                 return Err(CompileError::at(n.line, n.col, "an include is `include \"path/to/the/part.plm\"`: a piece of this scene, in a file of its own"));
             };
-            let target = path.parent().unwrap_or(Path::new(".")).join(which);
-            let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
+            let target = normalize(&path.parent().unwrap_or(Path::new(".")).join(which));
+            if !target.is_file() {
+                return Err(CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {})", target.display())));
+            }
             if self.open_stack.contains(&target) {
                 return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up including itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
             }
@@ -369,7 +371,9 @@ fn read_with(path: &str, unsaved: Vec<(PathBuf, String)>) -> Result<(Scene, Vec<
 /// needs them even when the file is half-written and does not compile.
 fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Scene, Vec<PathBuf>), (Vec<CompileError>, Vec<(PathBuf, String)>)>, Vec<compiler::Symbol>) {
     let mut l = Reader { unsaved, ..Default::default() };
-    let main = Path::new(path).canonicalize().unwrap_or_else(|_| PathBuf::from(path));
+    // The scene's own path, symlinks and all: the resolved imports hang off it, and a
+    // deployed tree (a symlink farm) must import its own neighbours.
+    let main = normalize(Path::new(path));
     let mut symbols = Vec::new();
     let compiled = (|| {
         l.open_stack.push(main.clone());
