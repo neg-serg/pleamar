@@ -1,21 +1,28 @@
 // A menu row, for any list of options: the tray today, a context menu
 // tomorrow. It expects records with `label`, `separator`, `enabled`,
-// `checked` (-1: not a checkbox · 0: empty · 1: checked) and `children`; and it is
-// told which event to emit on press, which carries the row's position inside.
+// `checked` (-1: not a checkbox · 0: empty · 1: checked), `children`, `icon` and
+// `shortcut`; and it is told which event to emit on press, which carries the row's
+// position inside, and `with_icons` —1 while the rows bring pictures— so a list of
+// words alone does not leave an empty column before every label.
 
 import "palette.plm"
 
 //  `strict`: its components only read what they ask for, what they declare and the palette's.
 library Menu strict {
-    component MenuRow(r: record, chosen: event, tone: color = mint, width: number = 220) {
+    component MenuRow(r: record, chosen: event, with_icons: number = 0, tone: color = mint, width: number = 220) {
         size: width, 30 - r.separator * 21
         prop on = 0 ~quick
         box hit { from: 0, 0; size: width, 30 - r.separator * 21; corner: 7; color: tone
                   opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
         //  A separator's stripe.
         box { from: 6, 4; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
-        text r.label { at: 12, 15; anchor: left center; size: 13.5; width: width - 50; lines: 1; color: ink
+        //  The row's own picture, in the column the labels make room for.
+        image r.icon { at: 10, 7; size: 16, 16; opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
+        text r.label { at: 12 + with_icons * 22, 15; anchor: left center; size: 13.5; width: width - 50 - with_icons * 22; lines: 1; color: ink
                        opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
+        //  What the application says opens it, in the scene's own words for keys.
+        text r.shortcut { at: width - 30, 15; anchor: right center; size: 11.5; color: ink
+                          opacity: (1 - r.separator) * (0.3 + r.enabled * 0.3) }
         //  A checkbox, checked or not; or the «there is more» arrow.
         ellipse { at: width - 16, 15; radius: 3.5; color: tone; opacity: r.checked > 0.5 }
         ellipse { at: width - 16, 15; radius: 3.5; stroke: 1.2; color: ink; opacity: if(r.checked > -0.5, 0.5, 0) }

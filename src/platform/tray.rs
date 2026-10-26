@@ -6,9 +6,12 @@
 //! shows the icons, and there can be several. If nobody is the watcher, we are;
 //! if someone else already is (another bar), we ask it: the tray shows up all the same.
 //!
-//! `{ { key, id, title, status, icon, menu, tooltip, tooltip_body }, … }`. `icon`
+//! `{ { key, id, title, status, icon, menu, menu_revision, tooltip, tooltip_body }, … }`. `icon`
 //! is an icon name or a path: it works as is for `image … = from`. `status`:
-//! Active, Passive, NeedsAttention. `tooltip` and `tooltip_body` are what the
+//! Active, Passive, NeedsAttention. `menu_revision` counts the times that icon's menu said
+//! `LayoutUpdated`: an application may fill it in when it is about to be shown, or change
+//! it while it is open, and a scene painting it asks again when the number it sees is not
+//! the one it drew. `tooltip` and `tooltip_body` are what the
 //! application says on hover, `""` when it says nothing. On Windows it will be
 //! `Shell_NotifyIcon`; on macOS, `NSStatusItem` does not let you see other apps' ones.
 
@@ -114,6 +117,68 @@ fn from_pixels(pixmaps: Vec<(i32, i32, Vec<u8>)>) -> Option<String> {
     Some(path.to_string_lossy().into_owned())
 }
 
+/// A row's own picture arrives as `icon-data`: a bare array of ARGB bytes with no
+/// size said, since an icon is square. Taken as one of the pixmaps `from_pixels`
+/// already knows how to write out.
+fn square(data: &[u8]) -> Option<(i32, i32, Vec<u8>)> {
+    let side = ((data.len() / 4) as f64).sqrt().round() as usize;
+    (side > 0 && side * side * 4 == data.len()).then(|| (side as i32, side as i32, data.to_vec()))
+}
+
+/// The bytes of an `ay`.
+fn bytes_of(v: &zbus::zvariant::Value) -> Vec<u8> {
+    use zbus::zvariant::Value;
+    match v {
+        Value::Array(a) => a.iter().filter_map(|b| b.downcast_ref::<u8>().ok()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The strings of an `aas`: an array of arrays of strings.
+fn combos_of(v: &zbus::zvariant::Value) -> Vec<Vec<String>> {
+    use zbus::zvariant::Value;
+    let Value::Array(outer) = v else { return Vec::new() };
+    outer
+        .iter()
+        .filter_map(|c| match c {
+            Value::Array(inner) => Some(inner.iter().filter_map(|s| s.downcast_ref::<&str>().ok().map(str::to_owned)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A row's shortcut, in the words the scene writes keys with: the first
+/// combination the application offers, `Ctrl+S` and not `Control+S`.
+fn shortcut_text(combos: &[Vec<String>]) -> String {
+    let Some(first) = combos.first() else { return String::new() };
+    first
+        .iter()
+        .map(|part| match part.as_str() {
+            "Control" | "Ctrl" => "Ctrl",
+            "Super" | "Meta" | "Mod4" => "Super",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+/// Each menu that said `LayoutUpdated`, and how many times: its application may
+/// fill it in only when it is about to be shown, and may change it while it is open.
+/// The icons' records carry the number so whoever is painting a menu can ask again.
+static MENUS_CHANGED: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+
+fn menu_changed(path: &str) {
+    let mut a = MENUS_CHANGED.lock().unwrap();
+    match a.iter_mut().find(|(p, _)| p == path) {
+        Some((_, n)) => *n += 1,
+        None => a.push((path.to_owned(), 1)),
+    }
+}
+
+fn menu_revision(path: &str) -> u64 {
+    MENUS_CHANGED.lock().unwrap().iter().find(|(p, _)| p == path).map_or(0, |(_, n)| *n)
+}
+
 fn icon_of(p: &Proxy) -> String {
     let name: String = p.get_property("IconName").unwrap_or_default();
     if !name.is_empty() {
@@ -189,7 +254,7 @@ fn report(c: &Connection, own: Option<&Mutex<Registry>>) -> SysValue {
             return None;
         };
         let title: String = p.get_property("Title").unwrap_or_default();
-        let menu = p.get_property::<zbus::zvariant::OwnedObjectPath>("Menu").is_ok_and(|m| m.as_str() != "/" && !m.as_str().is_empty());
+        let menu = p.get_property::<zbus::zvariant::OwnedObjectPath>("Menu").ok().filter(|m| m.as_str() != "/" && !m.as_str().is_empty());
         // (icon name, icon pixels, title, description): only the words are taken.
         let (_, _, tip, tip_body) = p.get_property::<(String, Vec<(i32, i32, Vec<u8>)>, String, String)>("ToolTip").unwrap_or_default();
         Some(SysValue::Map(vec![
@@ -198,7 +263,8 @@ fn report(c: &Connection, own: Option<&Mutex<Registry>>) -> SysValue {
             ("id".into(), SysValue::Text(id)),
             ("status".into(), SysValue::Text(p.get_property("Status").unwrap_or_else(|_| "Active".to_owned()))),
             ("icon".into(), SysValue::Text(icon_of(&p))),
-            ("menu".into(), SysValue::Bool(menu)),
+            ("menu".into(), SysValue::Bool(menu.is_some())),
+            ("menu_revision".into(), SysValue::Num(menu.as_ref().map_or(0, |m| menu_revision(m.as_str())) as f64)),
             ("tooltip".into(), SysValue::Text(tip)),
             ("tooltip_body".into(), SysValue::Text(plain(&tip_body))),
         ]))
@@ -236,18 +302,27 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
     registry.lock().unwrap().updates = Some(tx.clone());
     let _ = RESCAN.set(Mutex::new(tx.clone()));
 
-    // Three things mean we have to look again: an icon changing (`NewIcon`,
+    // Four things mean we have to look again: an icon changing (`NewIcon`,
     // `NewTitle`, `NewToolTip`, `NewStatus`… every signal of the item), the
-    // watcher (if it is someone else) registering or removing someone, and someone leaving the bus.
+    // watcher (if it is someone else) registering or removing someone, someone
+    // leaving the bus, and an application changing its menu while it is open
+    // (`LayoutUpdated`: the row it was painted with is not the one it has now).
     let signal = |interface: &'static str, member: Option<&'static str>| {
         let b = MatchRule::builder().msg_type(zbus::message::Type::Signal).interface(interface).ok()?;
         Some(match member { Some(m) => b.member(m).ok()?, None => b }.build())
     };
-    for rule in [signal(ITEM, None), signal(WATCHER, None), signal("org.freedesktop.DBus", Some("NameOwnerChanged"))].into_iter().flatten() {
+    let rules = [(signal(ITEM, None), false), (signal(WATCHER, None), false), (signal("org.freedesktop.DBus", Some("NameOwnerChanged")), false), (signal(MENU, Some("LayoutUpdated")), true)];
+    for (rule, menu) in rules.into_iter().filter_map(|(r, m)| Some((r?, m))) {
         let (c, tx) = (c.clone(), tx.clone());
         std::thread::spawn(move || {
             let Ok(messages) = MessageIterator::for_match_rule(rule, &c, Some(32)) else { return };
-            for _ in messages {
+            for m in messages {
+                let Ok(m) = m else { continue };
+                if menu {
+                    if let Some(path) = m.header().path() {
+                        menu_changed(path.as_str());
+                    }
+                }
                 if tx.send(Update::Rescan).is_err() { break }
             }
         });
@@ -314,11 +389,20 @@ fn node(v: &zbus::zvariant::Value) -> Option<SysValue> {
     // `_File` marks the shortcut letter; `__` is a real underscore.
     let label = text("label").unwrap_or_default().replace("__", "\u{1}").replace('_', "").replace('\u{1}', "_");
     let toggle = text("toggle-type").filter(|t| !t.is_empty());
+    // A row's picture, a name or the pixels written out as a PNG, and the key
+    // combination its application offers beside the label.
+    let icon = text("icon-name").filter(|n| !n.is_empty()).or_else(|| {
+        let data = props.get::<&str, zbus::zvariant::OwnedValue>(&"icon-data").ok().flatten()?;
+        from_pixels(vec![square(&bytes_of(&data))?])
+    }).unwrap_or_default();
+    let shortcut = props.get::<&str, zbus::zvariant::OwnedValue>(&"shortcut").ok().flatten().map(|v| shortcut_text(&combos_of(&v))).unwrap_or_default();
     let mut m = vec![
         ("id".to_owned(), SysValue::Num(*id as f64)),
         ("label".to_owned(), SysValue::Text(label)),
         ("enabled".to_owned(), SysValue::Bool(flag("enabled").unwrap_or(true))),
         ("separator".to_owned(), SysValue::Bool(text("type").as_deref() == Some("separator"))),
+        ("icon".to_owned(), SysValue::Text(icon)),
+        ("shortcut".to_owned(), SysValue::Text(shortcut)),
         ("children".to_owned(), SysValue::List(children)),
     ];
     if toggle.is_some() {
@@ -327,7 +411,10 @@ fn node(v: &zbus::zvariant::Value) -> Option<SysValue> {
     Some(SysValue::Map(m))
 }
 
-/// `sys.ask("tray.menu", key)` → `{ { id, label, enabled, separator, checked, children }, … }`
+/// `sys.ask("tray.menu", key)` → `{ { id, label, enabled, separator, icon, shortcut, checked, children }, … }`
+/// — `icon` a name or a path, as an item's is; `shortcut` written the way the scene
+/// writes keys (`Ctrl+S`), `""` when the application says none; `checked` only on the
+/// rows that are a checkbox or a radio, and `children` is what a submenu holds.
 pub fn query(what: &str, args: &[SysValue]) -> Result<SysValue, String> {
     let c = CONNECTION.get().ok_or("the tray is not running: sys.watch(\"tray\", …) is missing")?;
     let ("tray.menu", [SysValue::Text(key)]) = (what, args) else { return Err(format!("'{what}' is not asked like that: tray.menu(key)")) };
@@ -374,7 +461,26 @@ pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::plain;
+    use super::{plain, shortcut_text, square};
+
+    #[test]
+    fn a_shortcut_is_written_as_the_scene_writes_it() {
+        assert_eq!(shortcut_text(&[vec!["Control".into(), "S".into()]]), "Ctrl+S");
+        assert_eq!(shortcut_text(&[vec!["Control".into(), "Shift".into(), "Z".into()]]), "Ctrl+Shift+Z");
+        assert_eq!(shortcut_text(&[vec!["Super".into(), "Return".into()]]), "Super+Return");
+        // The first is the combination the application prefers; the others are alternatives.
+        assert_eq!(shortcut_text(&[vec!["Alt".into(), "F4".into()], vec!["Control".into(), "Q".into()]]), "Alt+F4");
+        assert_eq!(shortcut_text(&[vec![]]), "");
+        assert_eq!(shortcut_text(&[]), "");
+    }
+
+    #[test]
+    fn icon_data_is_taken_for_the_square_it_is() {
+        assert_eq!(square(&[0; 64]).map(|(w, h, d)| (w, h, d.len())), Some((4, 4, 64)));
+        // A shape that is not a square says nothing about its size: it is not read as one.
+        assert_eq!(square(&[0; 8]), None);
+        assert_eq!(square(&[]), None);
+    }
 
     #[test]
     fn a_tooltip_body_is_read_as_plain_text() {

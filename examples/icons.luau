@@ -8,6 +8,12 @@ local function show(list)
     local rows = #path > 0 and { { back = true, label = "‹  Back" } } or {}
     for _, it in ipairs(list) do rows[#rows + 1] = it end
     model.rows = rows
+    -- The labels make room for a picture only when there is one to show.
+    local with = 0
+    for _, r in ipairs(rows) do
+        if (r.icon or "") ~= "" then with = 1 break end
+    end
+    fact.with_icons = with
 end
 
 if not sys.watch("tray", function(list) model.icons = list end) then

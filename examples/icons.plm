@@ -19,9 +19,12 @@ scene TrayIcons {
         enabled: bool = true
         checked: number = -1              // -1: not a checkbox · 0: empty · 1: checked
         children: number                  // how many it has inside: leads to another menu
+        icon: image 16, 16                // the row's own picture, when its application gives one
+        shortcut: text                    // `Ctrl+S`, in the words the scene writes keys with
     }
     fact menu_open = false
     fact slot = 0                         // which icon the open menu belongs to
+    fact with_icons = 0                   // 1 while these rows bring pictures: their labels make room
     event activate ->                     // (i): the usual click
     event menu ->                         // (i): wants to see its menu
     event choose ->                       // (i): that row has been chosen
@@ -58,7 +61,7 @@ scene TrayIcons {
         body { color: #1b1c1c; border: 1, #38393a
             box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
         column list { at: 8, 8
-            for r in rows { MenuRow(r, chosen: choose) }
+            for r in rows { MenuRow(r, chosen: choose, with_icons: with_icons) }
         }
     }
 }
