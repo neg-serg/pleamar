@@ -627,6 +627,12 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    /// The region now: `update_input_region` commits it, and no frame follows a
+    /// closed surface to carry it there.
+    fn hide(&self) {
+        self.update_input_region(&[]);
+    }
+
     /// Takes effect with the next frame presented, like the input region.
     /// Committed now, like the input region: a surface that has just closed
     /// paints no more frames, and a keyboard it was lent stayed lent —what

@@ -1019,6 +1019,10 @@ pub trait PlatformWindow: Send {
     /// Grab or release the keyboard with the scene running: a launcher wants it
     /// entirely while it's open, and not at all when it isn't.
     fn keyboard(&self, t: crate::scene::Keyboard);
+    /// Take the surface out of the compositor's input for as long as it is closed: a closed one
+    /// is not seen and cannot be pressed, which `open:` promises and, before this, did not do —
+    /// a menu's catcher stayed a target for the whole monitor and swallowed every click.
+    fn hide(&self) {}
     /// That the system report (`ToRender::Frame`) when it wants the frame after
     /// the one about to be presented. Where that's unknown, it doesn't report, and the clock sets the pace.
     fn request_frame(&self) {}

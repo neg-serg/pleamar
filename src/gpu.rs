@@ -4052,6 +4052,12 @@ impl Sheet {
     pub fn keyboard(&self, t: Keyboard) {
         self.window.keyboard(t);
     }
+
+    /// A closed sheet takes no clicks: its input region is emptied, so the press goes to
+    /// whatever is under it instead of to a menu nobody opened.
+    pub fn hide(&self) {
+        self.window.hide();
+    }
 }
 
 /// Header, frame history and, at the end, the lens: whether there is a background to show.

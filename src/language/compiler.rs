@@ -529,7 +529,14 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             Vec::new()
         };
         if copies.is_empty() {
+            let i0 = o.e.instrs.len();
             o.group(this_pass.into_iter());
+            // The scene's own body: what is loose, and the named surfaces it holds —those
+            // record theirs inside `surface`. A zone takes the innermost body that holds it.
+            if pass == 2 {
+                let loose = o.e.surfaces.iter().position(|s| s.name.is_empty()).unwrap_or(0);
+                o.e.surface_bodies.push((loose, i0..o.e.instrs.len()));
+            }
             continue;
         }
         // The named surfaces are not the scene surface's: each one has its own
@@ -570,6 +577,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             // same order in which they were noted: their span is that of `o.rules`.
             // The rules are compiled afterwards, all in a row and in this same order:
             // here it is noted how many NODES are its own, and below it is translated into compiled ones.
+            o.e.surface_bodies.push((k, i0..o.e.instrs.len()));
             o.e.spans.push(crate::scene::Span { surface: k, instrs: i0..o.e.instrs.len(), behaviors: c0..o.e.behaviors.len(), rules: mark..o.rules.len() });
         }
     }
@@ -4414,11 +4422,11 @@ impl<'a> Compiler<'a> {
             if !draws {
                 return Ok(());
             }
-            let copies: Vec<(f32, f32, usize, bool)> = self.e.surfaces.iter().filter(|s| s.name == name).map(|s| (s.origin.0, s.origin.1, s.instance, matches!(s.screens, Screens::Number(_)))).collect();
+            let copies: Vec<(usize, f32, f32, usize, bool)> = self.e.surfaces.iter().enumerate().filter(|(_, s)| s.name == name).map(|(k, s)| (k, s.origin.0, s.origin.1, s.instance, matches!(s.screens, Screens::Number(_)))).collect();
             // A lock screen covers all of its monitor, whatever its `size:`
             // says: inside it, what the monitor measures is what it measures.
             let lock = self.e.surfaces.iter().any(|s| s.name == name && s.lock_screen);
-            for (ox, oy, instance, per_screen) in copies {
+            for (k, ox, oy, instance, per_screen) in copies {
                 let mark = self.rules.len();
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
@@ -4432,11 +4440,13 @@ impl<'a> Compiler<'a> {
                     self.scopes.push(Rc::new(env));
                 }
                 let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
+                let i0 = self.e.instrs.len();
                 self.e.paint(Instr::Transform(Some(t.clone())));
                 self.under.push(t);
                 self.group(n.body.as_deref().unwrap_or(&[]).iter());
                 self.under.pop();
                 self.e.paint(Instr::Transform(None));
+                self.e.surface_bodies.push((k, i0..self.e.instrs.len()));
                 if per_screen {
                     self.close_scope(mark);
                 } else if lock {
@@ -7166,7 +7176,10 @@ impl<'a> Compiler<'a> {
                     (Some(a), Some(v)) => a * v,
                     (a, v) => a.or(v).unwrap_or(Expr::K(1.0)),
                 };
+                // Which surface declared it: the innermost body that holds its place.
+                let home = self.e.surface_bodies.iter().filter(|(_, r)| r.contains(&k.at)).max_by_key(|(_, r)| r.start).map_or(0, |(s, _)| *s);
                 let z = self.e.zone_under(interned(&k.name), k.shape, active, k.under);
+                self.e.zones[z.0 as usize].surface = home;
                 self.e.zones[z.0 as usize].cursor = k.cursor;
                 self.e.zones[z.0 as usize].cursor_when = k.cursor_when;
                 self.e.zones[z.0 as usize].at = k.at;

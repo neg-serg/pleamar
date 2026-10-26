@@ -1405,6 +1405,11 @@ impl Cursor {
 #[derive(Clone, Debug)]
 pub struct Zone {
     pub id: &'static str,
+    /// The surface whose body declared it. A zone takes no click while that one is
+    /// closed, and it is its **own** surface that decides: what its box happens to
+    /// overlap is not ownership —a catcher over the whole monitor overlaps every
+    /// panel that is not open—. Set at load, from `Scene::surface_bodies`.
+    pub surface: usize,
     pub shape: Shape,
     pub active: Expr,
     /// Which cursor is set when passing over it.
@@ -2006,6 +2011,11 @@ pub struct Scene {
     /// the render skips its part entirely. Without this, two copies were twice
     /// the scene per frame even if one was not visible.
     pub spans: Vec<Span>,
+    /// The instructions of each surface's body, by the index of the surface, in the
+    /// order they were read: a zone learns from here which surface declared it
+    /// (`Zone::surface`), once, at load. Unlike `spans`, every surface has one —
+    /// those only exist for the copies, which is all `absent` needs—.
+    pub surface_bodies: Vec<(usize, std::ops::Range<usize>)>,
     /// With `screens: each`, a rule that comes out the same in every copy —it
     /// names nothing of its own copy, only the scene's facts and props— is the
     /// same rule written twice: for each one, the first of its twins. Only one
@@ -2216,7 +2226,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, cursor_when: None, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None });
+        self.zones.push(Zone { id, surface: 0, shape, active: active.into(), cursor: Cursor::Normal, cursor_when: None, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be

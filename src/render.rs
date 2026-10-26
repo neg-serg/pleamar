@@ -4052,26 +4052,18 @@ pub fn run(
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
         // the surface is transparent for the click too.
-        // Nothing can be clicked on a closed surface. Its piece of the plane is
-        // the one its sheet really covers, not the size written in the scene:
-        // `size: full, full` is written as 0 × 0, and a closed full-screen
-        // surface kept its zones —a transparent wall over the whole desktop
-        // that took every click, and with no cursor of its own, the mouse
-        // vanished—.
-        let closed: Vec<[f32; 4]> = sheets
-            .iter()
-            .filter(|l| l.view.popup.is_none())
-            .filter(|l| scene.surfaces.get(l.view.surface).is_some_and(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c))))
-            .map(|l| l.view.bounds())
-            .chain(scene.surfaces.iter().filter(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c))).map(|s| [s.origin.0, s.origin.1, s.origin.0 + s.width.max(1) as f32, s.origin.1 + s.height.max(1) as f32]))
-            .collect();
+        // Nothing can be clicked on a closed surface: its own zones are off the input,
+        // every one its body declared. **Its own**, not by overlap: a closed panel's
+        // zones are where its piece of the plane is, but so are a catcher's, and one
+        // over the whole monitor covers every panel that is not open —dropping a zone
+        // because it touched a closed surface took the catcher's own click away—.
+        let shut = |z: &crate::scene::Zone| scene.surfaces.get(z.surface).is_some_and(|s| s.open.as_ref().is_some_and(|e| !e.is_true(c)));
         let boxes: Vec<[i32; 4]> = scene
             .zones
             .iter()
             .filter(|z| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
-            .filter(|z| z.active.is_true(c))
+            .filter(|z| z.active.is_true(c) && !shut(z))
             .filter_map(|z| z.bounds(c))
-            .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
         // (A surface that has just presented its first frame gets its region now.)
@@ -4082,15 +4074,8 @@ pub fn run(
             if let Some(which) = std::env::var_os("PLEAMAR_REGIONS").filter(|w| w.len() > 1) {
                 let which = which.to_string_lossy();
                 for z in scene.zones.iter().filter(|z| z.id.contains(which.as_ref())) {
-                    let b = z.bounds(c);
-                    let hidden = b.is_some_and(|b| closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]));
-                    eprintln!("regions · zone {} · active {} · {:?} · under a closed surface {hidden}", z.id, z.active.is_true(c), b);
-                    if let Some(b) = b.filter(|_| hidden) {
-                        for v in closed.iter().filter(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
-                            let who: Vec<String> = sheets.iter().filter(|l| l.view.bounds() == *v).map(|l| format!("sheet of surface {}", l.view.surface)).chain(scene.surfaces.iter().enumerate().filter(|(_, s)| s.origin.0 == v[0] && s.origin.1 == v[1]).map(|(k, s)| format!("surface {k} '{}' #{}", s.name, s.instance))).collect();
-                            eprintln!("regions ·   hidden by {v:?}: {who:?}");
-                        }
-                    }
+                    let who = scene.surfaces.get(z.surface).map_or("", |s| s.name.as_str());
+                    eprintln!("regions · zone {} · active {} · {:?} · its surface {who:?} closed {}", z.id, z.active.is_true(c), z.bounds(c), shut(z));
                 }
             }
         }
@@ -4260,10 +4245,19 @@ pub fn run(
             open_changed |= is_open != l.open;
             if is_open {
                 l.cleared = false;
-            } else if l.lens.is_some() {
-                // Closed it shows no glass: its canvas and its background, out.
-                l.cancel_backdrop();
-                l.lens = None;
+            } else {
+                // Closed: the input region is emptied and committed right now, not left
+                // waiting for a frame that may never come —a surface that draws nothing
+                // presents none—. What it held keeps swallowing clicks until then.
+                if l.open && l.view.popup.is_none() {
+                    l.hide();
+                    l.input_region.clear();
+                }
+                if l.lens.is_some() {
+                    // Closed it shows no glass: its canvas and its background, out.
+                    l.cancel_backdrop();
+                    l.lens = None;
+                }
             }
             l.open = is_open;
         }
