@@ -11,9 +11,12 @@ scene TrayIcons {
     permissions { services: "tray", "tray.*" }
 
 
-    // ── the boundary: two lists the logic fills ──────────────────
+    //  ── the boundary: the lists the logic fills ──────────────────
+    //  `rows` is the window it is looking through, not the whole menu: the logic cuts
+    //  the slice that belongs, ten at a time (`first` says from where), so a menu of
+    //  sixty costs what one of ten costs.
     model icons max 8 { icon: image 28, 28 }
-    model rows max 14 {
+    model rows max 10 {
         label: text
         separator: bool
         enabled: bool = true
@@ -35,13 +38,18 @@ scene TrayIcons {
     fact menu_open = false
     fact slot = 0                         // which icon the open menu belongs to
     fact with_icons = 0                   // 1 while these rows bring pictures: their labels make room
+    fact rows_total = 0                   // how many rows the open menu has, in all
+    fact first = 0                        // which one the window is at
     fact sub_open = false                 // whether the submenu is out
-    fact sub_row = 0                      // which row of the menu it came out of
+    fact sub_row = 0                      // which row of the window it came out of
     fact sub_icons = 0                    // the same, for the submenu's own rows
+    let row = 30                          // a row's height, all of them: it is what lines a submenu up
+    let visible = 10                      // how many fit at once
     event activate ->                     // (i): the usual click
     event menu ->                         // (i): wants to see its menu
-    event choose ->                       // (i): that row of the menu has been chosen
+    event choose ->                       // (i): that row of the window has been chosen
     event pick ->                         // (i): that row of the submenu has been chosen
+    event slid ->                         // (the scroll): which rows the window is at now
 
     // ── the pill ─────────────────────────────────────────────────
     row tray ~quick {
@@ -66,23 +74,36 @@ scene TrayIcons {
     }
 
     // ── the menu ─────────────────────────────────────────────────
-    //  Under its icon, and as tall as its list.
+    //  Under its icon, as tall as its rows —ten of them at most: a longer menu scrolls,
+    //  by the wheel or dragged by any of its rows, and the logic hands over the slice
+    //  the window is at when it moves.
     popup tray_menu {
         at: 210 - tray.width / 2 + 10 + slot * 42 - 8, 50
-        size: 236, 16 + list.height
+        size: 236, 16 + min(rows_total, visible) * row
         open: menu_open
 
         body { color: #1b1c1c; border: 1, #38393a
-            box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
+            box { from: 0, 0; size: 236, 16 + min(rows_total, visible) * row; corner: 12 } }
         column list { at: 8, 8
-            for r in rows { MenuRow(r, chosen: choose, with_icons: with_icons) }
+            view: 220, min(rows_total, visible) * row
+            step: row
+            content: rows_total * row      // the length of the whole menu, not of the window
+            //  `from first`: copy 0 is row `first` of the real menu, and each one sits in
+            //  its place in it, so the window shows whichever rows are in view.
+            for r in rows from first {
+                group { size: 220, row
+                    move: 0, first * row
+                    MenuRow(r, chosen: choose, with_icons: with_icons)
+                }
+            }
         }
     }
+    on change floor(list.scroll / row) { emit slid(floor(list.scroll / row)) }
 
     //  What came out of a row: beside the menu, its top against that row's.
     popup submenu {
         in: tray_menu
-        at: 236, 8 + sub_row * 30
+        at: 236, 8 + sub_row * row
         size: 216, 16 + subs.height
         open: sub_open
 
