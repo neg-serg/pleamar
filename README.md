@@ -363,7 +363,9 @@ touching nothing.
 
 `pleamar --lsp` is a language server over stdio, with this same compiler behind
 it: mistakes as you type, which words fit here, what the word under the cursor
-means, go to where a name was declared, where it is used, and renaming it.
+means, go to where a name was declared, where it is used, and renaming it —a
+record's fields too: after `r.` inside a `for`, the fields of the model it reads,
+and `r.label` goes to where that field is declared.
 `pleamar --highlight vim|vscode` writes the syntax file straight from the
 vocabulary, so it cannot fall behind. Both, already generated, in
 [`editor/`](editor/).

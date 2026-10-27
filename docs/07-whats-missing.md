@@ -92,6 +92,6 @@ Kept in sight here, because it is the reason this exists:
 
 ## 4. In what order
 
-1. The language server knowing about names: completing the scene's facts and components, and going to where they are declared (G9).
+1. ~~The language server knowing about names~~ —done, down to a record's fields (G9)→. What is left there is renaming across the Luau logic, and a tree-sitter grammar for the editors that only speak it.
 2. Copies that are born and die on their own (G12), and inertia when a list is let go.
 3. Plain windows, session lock, IME.

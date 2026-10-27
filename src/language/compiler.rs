@@ -6713,7 +6713,7 @@ impl<'a> Compiler<'a> {
         }
         let plain = self.generated.alloc(plain);
         // Only lists (`service tray { list: icons }`): no fields of its own.
-        let fields = if plain.body.as_ref().is_some_and(|b| b.is_empty()) && !models.is_empty() { Vec::new() } else { self.fields_of(plain, 1)? };
+        let fields = if plain.body.as_ref().is_some_and(|b| b.is_empty()) && !models.is_empty() { Vec::new() } else { self.fields_of(plain, 1, None)? };
         for k in &fields {
             if !own.contains(&k.name.as_str()) {
                 let hint = closest_match(&k.name, own.iter().map(|s| s.to_string()).collect::<Vec<_>>().iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
@@ -6955,7 +6955,7 @@ impl<'a> Compiler<'a> {
         let name = self.declare(&c.id("a name for the model")?);
         let capacity = if c.word("max") { c.num()? as usize } else { 16 };
         c.expect_end()?;
-        let fields = self.fields_of(n, capacity)?;
+        let fields = self.fields_of(n, capacity, Some(&name))?;
         let model = Model { name: name.clone(), capacity, fields };
         let mut how_many = 0;
         self.declare_rows(&name, &model, &mut how_many).map_err(|m| CompileError::at(n.line, n.col, m))?;
@@ -6963,8 +6963,10 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// The fields of a model, or of a list inside a model.
-    fn fields_of(&mut self, n: &'a Node, capacity: usize) -> R<Vec<Field>> {
+    /// The fields of a model, or of a list inside a model. Under `Some(name)` —a model
+    /// of the scene— each one is also noted for the editor, as `name.field`: it is what
+    /// completes after `r.` and what `r.field` goes to.
+    fn fields_of(&mut self, n: &'a Node, capacity: usize, of: Option<&str>) -> R<Vec<Field>> {
         if !(1..=1024).contains(&capacity) {
             return Err(CompileError::at(n.line, n.col, "a list holds between 1 and 1024 records: each one unfolds when loading"));
         }
@@ -6996,7 +6998,7 @@ impl<'a> Compiler<'a> {
                         continue;
                     }
                     c.expect_end()?;
-                    let inside = self.fields_of(x, capacity)?;
+                    let inside = self.fields_of(x, capacity, of.map(|p| format!("{p}.{name}")).as_deref())?;
                     Field { name: name.clone(), kind: FieldType::List(Box::new(Model { name, capacity, fields: inside })), fallback: FieldValue::Number(0.0) }
                 }
                 Entry::Prop { name, value, line, col } => {
@@ -7032,6 +7034,9 @@ impl<'a> Compiler<'a> {
             }
             if fields.iter().any(|k| k.name == field.name) {
                 return Err(CompileError::at(l, col, format!("field '{}' is there twice", field.name)));
+            }
+            if let Some(of) = of {
+                self.declared.push(Symbol { local: format!("{of}.{}", field.name), class: "field".to_owned(), line: l, col });
             }
             fields.push(field);
         }

@@ -30,7 +30,7 @@ pub fn serve() {
                     // 1 = the editor sends the whole file on every change. A scene
                     // file is a few hundred lines: compiling it costs milliseconds.
                     "textDocumentSync": { "openClose": true, "change": 1, "save": true },
-                    "completionProvider": { "triggerCharacters": [" ", ":", "{"] },
+                    "completionProvider": { "triggerCharacters": [" ", ":", "{", "."] },
                     "hoverProvider": true,
                     "definitionProvider": true,
                     "documentSymbolProvider": true,
@@ -70,9 +70,15 @@ pub fn serve() {
             "textDocument/definition" => {
                 let (text, pos) = cursor_position(&m, &open);
                 let word = word_at(&text, pos);
-                // `rows.3.label` and `mon.$screen.title` lead to `rows` and to `mon`.
+                // `rows.3.label` and `mon.$screen.title` lead to `rows` and to `mon`;
+                // `r.label` inside a `for` leads to that field of the model `r` is.
                 let root = word.split('.').next().unwrap_or(&word);
-                match names.iter().find(|(_, s)| s.class != "use" && (s.local == word || s.local == root)) {
+                let field = word.split_once('.').and_then(|(_, rest)| bound_model(&text, pos, root).map(|model| format!("{model}.{rest}")));
+                let theirs = names
+                    .iter()
+                    .find(|(_, s)| s.class != "use" && (s.local == word || s.local == root))
+                    .or_else(|| field.and_then(|f| names.iter().find(|(_, s)| s.class == "field" && s.local == f)));
+                match theirs {
                     Some((file, s)) => {
                         let theirs = open.get(file).cloned().unwrap_or_else(|| std::fs::read_to_string(file).unwrap_or_default());
                         let (l, c) = (s.line.saturating_sub(1), to_utf16_col(&theirs, s.line, s.col));
@@ -104,7 +110,7 @@ pub fn serve() {
                 let text = open.get(&path).cloned().unwrap_or_default();
                 let theirs: Vec<Value> = names
                     .iter()
-                    .filter(|(_, s)| s.class != "use")
+                    .filter(|(_, s)| s.class != "use" && s.class != "field")
                     .filter(|(f, _)| f.canonicalize().ok() == path.canonicalize().ok())
                     .map(|(_, s)| {
                         let (l, c) = (s.line.saturating_sub(1), to_utf16_col(&text, s.line, s.col));
@@ -118,7 +124,11 @@ pub fn serve() {
                 let (text, pos) = cursor_position(&m, &open);
                 let word = word_at(&text, pos);
                 // If it is a name from the scene, the first thing is what it is the name of.
-                let theirs = names.iter().find(|(_, s)| s.local == word && s.class != "use").map(|(f, s)| {
+                let theirs = names.iter().find(|(_, s)| s.local == word && s.class != "use").or_else(|| {
+                    let (root, rest) = word.split_once('.')?;
+                    let model = bound_model(&text, pos, root)?;
+                    names.iter().find(|(_, s)| s.class == "field" && s.local == format!("{model}.{rest}"))
+                }).map(|(f, s)| {
                     format!("`{}` — {} declared in `{}`, line {}.", s.local, s.class, f.file_name().unwrap_or_default().to_string_lossy(), s.line)
                 });
                 match theirs.into_iter().chain(help_for(&word)).collect::<Vec<_>>() {
@@ -335,17 +345,26 @@ fn item(word: &str, kind: u8, detail: &str) -> Value {
 
 fn completions(text: &str, pos: usize, names: &[(PathBuf, Symbol)]) -> Vec<Value> {
     // What the scene declares, each thing with its class: it is what gets written the most.
+    // A model's fields are not offered here: they come after a dot, and only there.
     let theirs = |classes: &[&str]| -> Vec<Value> {
         let mut seen = std::collections::HashSet::new();
         names
             .iter()
-            .filter(|(_, s)| s.class != "use")
+            .filter(|(_, s)| s.class != "use" && s.class != "field")
             .filter(|(_, s)| classes.is_empty() || classes.contains(&s.class.as_str()))
             .filter(|(_, s)| seen.insert(s.local.clone()))
             .map(|(_, s)| json!({ "label": s.local, "kind": lsp_symbol_kind(&s.class), "detail": s.class }))
             .collect()
     };
     let before = &text[..pos.min(text.len())];
+    // `r.` inside a `for r in rows { … }`: the fields of that model, and `index`, which
+    // every record has. `rows.` where `rows` is a model: how many it holds.
+    if let Some((object, typed)) = after_a_dot(before) {
+        let fields = fields_of_object(object, typed, text, pos, names);
+        if !fields.is_empty() {
+            return fields;
+        }
+    }
     let line = before.rsplit('\n').next().unwrap_or("");
     let last = line.split([';', '{', '(', ',']).next_back().unwrap_or("").trim_start();
     // `emit ` only takes events; `on ` expects what happens, and then a zone.
@@ -403,6 +422,97 @@ fn values_for(prop: &str) -> Option<&'static [&'static str]> {
         "cursor" => vocab::CURSORS,
         _ => return None,
     })
+}
+
+/// What is being written after a dot: `r.la` is `("r", "la")`, `r.` is `("r", "")`.
+/// Nothing when the word before the cursor has no dot of its own.
+fn after_a_dot(tail: &str) -> Option<(&str, &str)> {
+    let mut end = tail.len();
+    for (k, c) in tail.char_indices().rev() {
+        if c.is_alphanumeric() || c == '_' {
+            end = k;
+        } else {
+            break;
+        }
+    }
+    let typed = &tail[end..];
+    let before = tail[..end].strip_suffix('.')?;
+    let start = before.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |k| k + 1);
+    Some((&before[start..], typed))
+}
+
+/// The model that the innermost `for <name> in <model> { … }` around this place binds
+/// `name` to. Read from the text, like `enclosing_block`: it is what an editor needs
+/// while the scene is being written, and the compiler would say the same.
+fn bound_model(text: &str, pos: usize, name: &str) -> Option<String> {
+    let mut found: Option<(usize, String)> = None;
+    let mut from = 0;
+    while let Some(k) = text[from..].find("for ") {
+        let at = from + k;
+        from = at + 4;
+        // A word of its own: `before` is not `…for`, and what follows is `for x in …`.
+        if text[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let Some((var, rest)) = text[from..].split_once(" in ") else { continue };
+        if var.trim() != name {
+            continue;
+        }
+        let model: String = rest.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        // The block it opens, and whether the cursor is inside it.
+        let Some(open) = text[from..].find('{').map(|k| from + k) else { continue };
+        let mut depth = 0usize;
+        for (k, c) in text[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if open < pos && pos <= open + k {
+                            found = Some((at, model.clone()));
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    found.map(|(_, model)| model)
+}
+
+/// What can come after `object.`: the fields of the model a `for` binds it to —and
+/// `index`, which every record has—, or the count and the total of a model itself.
+fn fields_of_object(object: &str, typed: &str, text: &str, pos: usize, names: &[(PathBuf, Symbol)]) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    match bound_model(text, pos, object) {
+        Some(model) => {
+            let prefix = format!("{model}.");
+            let mut seen = std::collections::HashSet::new();
+            for (_, s) in names.iter().filter(|(_, s)| s.class == "field") {
+                let Some(field) = s.local.strip_prefix(&prefix) else { continue };
+                if field.contains('.') || !field.starts_with(typed) || !seen.insert(field.to_owned()) {
+                    continue;
+                }
+                out.push(json!({ "label": field, "kind": 5, "detail": format!("field of {model}") }));
+            }
+            if "index".starts_with(typed) {
+                out.push(item("index", 5, &format!("where this record is in {model}")));
+            }
+        }
+        // A model by its own name: what every list says of itself.
+        None if typed.is_empty() || ["count", "total"].iter().any(|w| w.starts_with(typed)) => {
+            if names.iter().any(|(_, s)| s.class == "model" && s.local == object) {
+                for (word, detail) in [("count", "how many records it holds"), ("total", "how many it was told there are")] {
+                    if word.starts_with(typed) {
+                        out.push(item(word, 5, detail));
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    out
 }
 
 // ── what this word means ────────────────────────────────────────

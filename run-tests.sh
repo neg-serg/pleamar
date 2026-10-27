@@ -71,5 +71,17 @@ if [ -n "$unused" ]; then
     bad=$((bad + 1))
 fi
 n=$((n + 1))
+
+# The editor knows what a record holds: after `r.` inside a `for`, the fields of the
+# model it reads and `index`; `r.label` goes to where that field is declared; and a
+# field is not offered where no dot came before it.
+if command -v python3 > /dev/null 2>&1; then
+    if ! python3 scripts/test-lsp.py ./target/release/pleamar > "$examples/lsp.txt" 2>&1; then
+        echo "✗ the language server does not know what a record holds:"
+        sed 's/^/  /' "$examples/lsp.txt"
+        bad=$((bad + 1))
+    fi
+    n=$((n + 1))
+fi
 rm -rf "$examples"
 [ "$bad" -eq 0 ] && echo "language · $n checks, all as expected" || { echo "language · $bad of $n fail"; exit 1; }
