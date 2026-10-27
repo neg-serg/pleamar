@@ -2166,7 +2166,21 @@ impl Gpu {
         let (adapter, (device, queue)) = match on_gl {
             Some(x) => x,
             None => {
-                let adapter = primary.expect("there is no graphics adapter");
+                // What wgpu does see, when there is nothing to paint with: without it the
+                // same message came for a missing driver, a driver the loader could not
+                // reach, and a card that cannot show on the surface.
+                let Some(adapter) = primary else {
+                    let seen: Vec<String> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())).iter().map(|a| {
+                        let i = a.get_info();
+                        format!("{} ({:?})", i.name, i.backend)
+                    }).collect();
+                    let what = if seen.is_empty() {
+                        "no driver was loaded at all (LD_LIBRARY_PATH, VK_ICD_FILENAMES)".to_owned()
+                    } else {
+                        format!("wgpu sees {} —and none of them can show on this surface", seen.join(", "))
+                    };
+                    panic!("there is no graphics adapter · {what}");
+                };
                 let dq = device_of(&adapter).expect("there is no device");
                 (adapter, dq)
             }

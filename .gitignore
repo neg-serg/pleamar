@@ -1,1 +1,3 @@
 /target
+# `nix build` leaves it here: a symlink into the store, not something to commit.
+/result

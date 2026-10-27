@@ -6220,8 +6220,11 @@ impl<'a> Compiler<'a> {
             if let Some(prop) = &scroller {
                 target.insert(format!("{name}.scroll"), prop.e());
                 // And as a real property: a rule can take it wherever it wants
-                // (`list.scroll: 0 ~calm`), not only the wheel.
+                // (`list.scroll: 0 ~calm`), not only the wheel. Its name is kept with
+                // the property it is: underneath it is `·scroll1`, and `--record` has
+                // to be able to ask for what the scene calls it.
                 self.props.insert(format!("{name}.scroll"), *prop);
+                self.e.prop_aliases.push((format!("{name}.scroll"), *prop));
             }
             // Whoever read it before this point read the property declared early: here it is filled in.
             let content_length = if is_row { content.0.clone() } else { content.1.clone() };
@@ -7225,6 +7228,7 @@ impl<'a> Compiler<'a> {
         // And the rules of the stacks that scroll, now that their zones exist.
         let wheel = self.facts["wheel"].e();
         let (dx, dy) = (self.facts["drag.dx"].e(), self.facts["drag.dy"].e());
+        let (vx, vy) = (self.facts["drag.vx"].e(), self.facts["drag.vy"].e());
         for (name, prop, until, step, spring, grab) in std::mem::take(&mut self.scrolls) {
             let Some(zone) = self.zones.get(&name).copied() else { continue };
             self.e.zones[zone.0 as usize].scrolls = Some(prop);
@@ -7234,8 +7238,15 @@ impl<'a> Compiler<'a> {
             // The stack's zone is under those of its children, and the drag reaches it all the same.
             let amount = if self.row_scrolls.contains(&name) { dx.clone() } else { dy.clone() };
             self.e.rule(Trigger::Press(zone), vec![Effect::Fact(grab, prop.e())]);
-            let a = (grab.e() - amount).max(Expr::K(0.0)).min(until);
+            let a = (grab.e() - amount).max(Expr::K(0.0)).min(until.clone());
             self.e.rule(Trigger::Drag(zone), vec![Effect::Animate(Transition { prop, to: a, spring: Spring::QUICK, delay: Duration::ZERO })]);
+            // Let go, it keeps going: what the hand was doing carries it a fifth of a second
+            // further —a flick travels, a nudge does not—, and the same spring that followed
+            // the drag takes it there. The release reaches a list from the inside too, where
+            // what was pressed is one of its rows.
+            let speed = if self.row_scrolls.contains(&name) { vx.clone() } else { vy.clone() };
+            let to = (prop.e() - speed * Expr::K(0.2)).max(Expr::K(0.0)).min(until);
+            self.e.rule(Trigger::Release(zone), vec![Effect::Animate(Transition { prop, to, spring: Spring::QUICK, delay: Duration::ZERO })]);
         }
     }
 

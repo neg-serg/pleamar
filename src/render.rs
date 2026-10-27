@@ -2192,6 +2192,10 @@ pub fn run(
             buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
+        // The lists under a press, which hear the release too: a list is dragged and let
+        // go from the inside, and what was pressed is one of its rows (see the compiler's
+        // glide and the grab taken here).
+        let mut released_lists: Vec<usize> = Vec::new();
         for (button, down) in &buttons {
             match (*button, *down) {
                 (0, true) => {
@@ -2230,6 +2234,25 @@ pub fn run(
                             last_key = now;
                         }
                         drag = Some((k, p, now));
+                        // A list is grabbed **from the inside**: what is pressed is a row,
+                        // and the list's own `on press` never hears of it, so where it was
+                        // stayed zero and a drag took it back to its start. Every scrolled
+                        // zone under the point notes it here, as its own press would.
+                        let grabbable: Vec<(usize, f32)> = {
+                            let c = Ctx { props: &props, facts: &facts, seen: None };
+                            scene
+                                .zones
+                                .iter()
+                                .filter(|z| z.scrolls.is_some() && z.active.is_true(c) && z.contains(c, p.0, p.1))
+                                .filter_map(|z| {
+                                    let h = scene.facts.iter().position(|f| f.0 == format!("{}.grab", z.id).as_str())?;
+                                    Some((h, props[z.scrolls?.0 as usize].x))
+                                })
+                                .collect()
+                        };
+                        for (h, was) in grabbable {
+                            facts[h] = was;
+                        }
                         let _ = to_logic.send(Event::Press(scene.zones[k].id));
                     }
                 }
@@ -2237,8 +2260,11 @@ pub fn run(
                     if let Some(s) = &mut selection {
                         s.dragging = false;
                     }
-                    if let Some((k, _, _)) = drag.take() {
+                    if let Some((k, o, _)) = drag.take() {
                         released = Some(k);
+                        // The lists under the press hear it too, as they heard the press.
+                        let c = Ctx { props: &props, facts: &facts, seen: None };
+                        released_lists.extend(scene.zones.iter().enumerate().filter(|(_, z)| z.scrolls.is_some() && z.contains(c, o.0, o.1)).map(|(i, _)| i));
                         if let Some(z) = scene.zones.get(k) {
                             let _ = to_logic.send(Event::Release(z.id));
                         }
@@ -2718,7 +2744,7 @@ pub fn run(
                     Trigger::Leave(z) => edges.contains(&(false, z.0 as usize)),
                     Trigger::Press(z) => pressed == Some(z.0 as usize),
                     Trigger::PressWith(z, b) => pressed_with == Some((z.0 as usize, *b)),
-                    Trigger::Release(z) => released == Some(z.0 as usize),
+                    Trigger::Release(z) => released == Some(z.0 as usize) || released_lists.contains(&(z.0 as usize)),
                     Trigger::Wheel(z) => wheel != 0.0 && inside[z.0 as usize],
                     // Dragging is not only for the topmost zone, like the wheel: it works
                     // for any zone that was underneath when it was pressed. That way a list
@@ -4793,7 +4819,7 @@ pub fn run(
                 // mark (`px#Hat1`), and nobody could guess that.
                 for n in &op.trace {
                     let n = n.as_str();
-                    let exists = scene.props.iter().any(|p| p.0 == n) || scene.facts.iter().any(|h| h.0 == n) || scene.texts.iter().any(|t| t.0 == n);
+                    let exists = scene.props.iter().any(|p| p.0 == n) || scene.prop_aliases.iter().any(|(a, _)| a == n) || scene.facts.iter().any(|h| h.0 == n) || scene.texts.iter().any(|t| t.0 == n);
                     if !exists {
                         let mut close: Vec<&str> = scene
                             .props
@@ -4817,7 +4843,9 @@ pub fn run(
                 .iter()
                 .map(|n| {
                     let n = n.as_str();
-                    if let Some(i) = scene.props.iter().position(|p| p.0 == n) {
+                    // A property the scene named (`list.scroll`) is one of its own underneath.
+                    let want = scene.props.iter().position(|p| p.0 == n).or_else(|| scene.prop_aliases.iter().find(|(a, _)| a == n).map(|(_, p)| p.0 as usize));
+                    if let Some(i) = want {
                         format!("{:.4}", props[i].x)
                     } else if let Some(i) = scene.facts.iter().position(|h| h.0 == n) {
                         format!("{:.4}", facts[i])

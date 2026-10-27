@@ -2011,6 +2011,11 @@ pub struct Scene {
     /// the render skips its part entirely. Without this, two copies were twice
     /// the scene per frame even if one was not visible.
     pub spans: Vec<Span>,
+    /// The names the scene gives the properties the compiler makes for it, and which
+    /// property each one is: `list.scroll` is `·scroll1` underneath. Reading and
+    /// writing them is resolved when loading, so at run time only this says one from
+    /// the other — `--record list.scroll` needs it.
+    pub prop_aliases: Vec<(String, PropId)>,
     /// The instructions of each surface's body, by the index of the surface, in the
     /// order they were read: a zone learns from here which surface declared it
     /// (`Zone::surface`), once, at load. Unlike `spans`, every surface has one —

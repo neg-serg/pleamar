@@ -90,9 +90,12 @@ grabbed **from the inside**: dragging is not the business of the topmost zone,
 but of any zone that was under the pointer when it was pressed. So a list can be
 dragged by one of its rows.
 
-How fast the hand was going is a fact too —`drag.vx`, `drag.vy`, in pixels a
-second, still there in the frame of the release—, so a list can be let go at
-speed: `on release list { list.scroll: list.scroll - drag.vy * 0.2 ~420ms }`.
+A list let go **keeps going** by itself: the engine reads the hand's speed
+(`drag.vx`, `drag.vy`, pixels a second) at the release and carries the scroll a
+fifth of a second further, so a flick travels and a slow drag does not. The
+scroll position is a property like any other, though, so a scene can take it
+wherever it wants —and a rule of its own on `release` lands after the engine's,
+so it replaces the glide—: `on release list { list.scroll: list.scroll - drag.vy * 0.2 ~420ms }`.
 
 The scroll position is also a property like any other, which a rule can send
 wherever it wants:
