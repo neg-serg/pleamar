@@ -90,6 +90,10 @@ grabbed **from the inside**: dragging is not the business of the topmost zone,
 but of any zone that was under the pointer when it was pressed. So a list can be
 dragged by one of its rows.
 
+How fast the hand was going is a fact too —`drag.vx`, `drag.vy`, in pixels a
+second, still there in the frame of the release—, so a list can be let go at
+speed: `on release list { list.scroll: list.scroll - drag.vy * 0.2 ~420ms }`.
+
 The scroll position is also a property like any other, which a rule can send
 wherever it wants:
 
@@ -108,6 +112,7 @@ scene Jumps {
     zone box top { at: 150, 216; size: 80, 26; corner: 8; cursor: pointer }
     box { at: 150, 216; size: 80, 26; corner: 8; color: #232727 }
     text "top" { at: 150, 216; anchor: center; size: 11; color: ink }
+    text number(drag.vy, 0) { at: 284, 216; anchor: right center; size: 11; color: ink; opacity: 35% }
     on press top { list.scroll: 0 ~calm }
 }
 ```

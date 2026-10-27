@@ -504,6 +504,11 @@ pub fn run(
     let mut key_repeat: Option<(u32, u32)> = Some((400, 33));
     // Each popup of the scene: whether it is open, where, and at what size.
     let mut popups: Vec<Option<[i32; 4]>> = Vec::new();
+    // How fast the hand was going on the last drag —pixels a second— and where it was:
+    // what `drag.vx` says, and what a list needs to keep going once it is let go.
+    let mut drag_speed = (0.0f32, 0.0f32);
+    let mut drag_last: Option<(f32, f32, Instant)> = None;
+    let mut drag_lately = false;
     // The lock surfaces that are engaged (or requested).
     let mut locks: Vec<usize> = Vec::new();
     let mut uniforms = [0f32; N_UNIFORMS];
@@ -2507,6 +2512,19 @@ pub fn run(
             };
             let local = focus.and_then(|k| scene.zones.get(k)).map_or((px, py), |z| z.to_local(Ctx { props: &props, facts: &facts, seen: None }, px, py));
             let (dx, dy) = drag.map_or((0.0, 0.0), |(_, o, _)| (px - o.0, py - o.1));
+            // How fast the hand is going, between frames and smoothed so that one
+            // jittery frame does not throw it away. It is kept through the frame of the
+            // release —the one a rule hears— and gone by the next.
+            if drag.is_some() {
+                let (lx, ly, when) = drag_last.unwrap_or((dx, dy, now));
+                let dt = now.saturating_duration_since(when).as_secs_f32().max(0.001);
+                drag_speed = (drag_speed.0 * 0.5 + (dx - lx) / dt * 0.5, drag_speed.1 * 0.5 + (dy - ly) / dt * 0.5);
+                drag_last = Some((dx, dy, now));
+                drag_lately = true;
+            } else if !std::mem::take(&mut drag_lately) {
+                drag_speed = (0.0, 0.0);
+                drag_last = None;
+            }
             for (k, (name, _)) in scene.facts.iter().enumerate() {
                 match *name {
                     "pointer.x" => facts[k] = px,
@@ -2517,6 +2535,8 @@ pub fn run(
                     "local.y" => facts[k] = local.1,
                     "drag.dx" => facts[k] = dx,
                     "drag.dy" => facts[k] = dy,
+                    "drag.vx" => facts[k] = drag_speed.0,
+                    "drag.vy" => facts[k] = drag_speed.1,
                     "wheel" => facts[k] = wheel,
                     _ => {}
                 }
