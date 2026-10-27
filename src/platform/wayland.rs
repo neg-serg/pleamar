@@ -1438,7 +1438,7 @@ pub fn reshape(which: usize, p: &crate::scene::Surface) {
 
 static POPUPS: std::sync::OnceLock<Popups> = std::sync::OnceLock::new();
 
-pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
+pub fn popup(k: usize, from: Option<usize>, what: Option<([i32; 4], (f32, f32))>) {
     let Some(e) = POPUPS.get() else { return };
     let Some(([x, y, w, h], origin)) = what else {
         e.open.lock().unwrap().retain(|a| a.k != k);
@@ -1446,6 +1446,17 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
         return;
     };
     let Some(parent) = e.parent.lock().unwrap().clone() else { return };
+    // A submenu comes out of the popup it belongs to: the compositor places it in that
+    // one's coordinates, keeps it over it, and takes it away with it. Anything else
+    // comes out of the layer surface. Glass in a submenu sees what the menu has behind.
+    let (under, base) = match from {
+        Some(p) => {
+            let open = e.open.lock().unwrap();
+            let Some(a) = open.iter().find(|a| a.k == p) else { return };
+            (Some(a.popup.xdg_surface().clone()), a.backdrop.clone())
+        }
+        None => (None, parent.backdrop.clone()),
+    };
     let open = || -> Option<OpenPopup> {
         let positioner = XdgPositioner::new(&e.xdg).ok()?;
         positioner.set_size(w, h);
@@ -1458,8 +1469,10 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
             positioner.set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
         }
         let wl = e.compositor.create_surface(&e.qh);
-        let popup = Popup::from_surface(None, &positioner, &e.qh, wl, &e.xdg).ok()?;
-        parent.layer.get_popup(popup.xdg_popup());
+        let popup = Popup::from_surface(under.as_ref(), &positioner, &e.qh, wl, &e.xdg).ok()?;
+        if under.is_none() {
+            parent.layer.get_popup(popup.xdg_popup());
+        }
         // If it opens because of a click a moment ago, let a click outside close it.
         if let (Some(seat), Some((serial, when))) = (e.seat.lock().unwrap().as_ref(), *e.last_press.lock().unwrap()) {
             if when.elapsed() < std::time::Duration::from_millis(1500) {
@@ -1478,7 +1491,7 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
                 })
                 .ok()?
         };
-        let backdrop = parent.backdrop.clone().map(|m| {
+        let backdrop = base.clone().map(|m| {
             let d = BackdropTarget::new(id, None, BackdropKind::Popup { parent: m, offset: Mutex::new((0, 0)) });
             *d.size.lock().unwrap() = (w as u32, h as u32);
             d

@@ -22,12 +22,26 @@ scene TrayIcons {
         icon: image 16, 16                // the row's own picture, when its application gives one
         shortcut: text                    // `Ctrl+S`, in the words the scene writes keys with
     }
+    //  A row that has more inside: the same shape, because it is drawn by the same row.
+    model sub max 8 {
+        label: text
+        separator: bool
+        enabled: bool = true
+        checked: number = -1
+        children: number
+        icon: image 16, 16
+        shortcut: text
+    }
     fact menu_open = false
     fact slot = 0                         // which icon the open menu belongs to
     fact with_icons = 0                   // 1 while these rows bring pictures: their labels make room
+    fact sub_open = false                 // whether the submenu is out
+    fact sub_row = 0                      // which row of the menu it came out of
+    fact sub_icons = 0                    // the same, for the submenu's own rows
     event activate ->                     // (i): the usual click
     event menu ->                         // (i): wants to see its menu
-    event choose ->                       // (i): that row has been chosen
+    event choose ->                       // (i): that row of the menu has been chosen
+    event pick ->                         // (i): that row of the submenu has been chosen
 
     // ── the pill ─────────────────────────────────────────────────
     row tray ~quick {
@@ -62,6 +76,20 @@ scene TrayIcons {
             box { from: 0, 0; size: 236, 16 + list.height; corner: 12 } }
         column list { at: 8, 8
             for r in rows { MenuRow(r, chosen: choose, with_icons: with_icons) }
+        }
+    }
+
+    //  What came out of a row: beside the menu, its top against that row's.
+    popup submenu {
+        in: tray_menu
+        at: 236, 8 + sub_row * 30
+        size: 216, 16 + subs.height
+        open: sub_open
+
+        body { color: #1b1c1c; border: 1, #38393a
+            box { from: 0, 0; size: 216, 16 + subs.height; corner: 12 } }
+        column subs { at: 8, 8
+            for r in sub { MenuRow(r, chosen: pick, with_icons: sub_icons, width: 200) }
         }
     }
 }

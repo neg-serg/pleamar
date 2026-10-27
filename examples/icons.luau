@@ -1,19 +1,20 @@
 -- The tray's logic: which icons there are, and the menu of the one asked for. A menu is
--- a tree, and a submenu does not open beside it: you go into it, with a row to come back.
+-- a tree, and a submenu comes out of it, beside the row it belongs to.
 
 local owner = nil                -- which icon the open menu belongs to
-local root, path = {}, {}        -- that menu, whole; and which submenus have been entered
 
-local function show(list)
-    local rows = #path > 0 and { { back = true, label = "‹  Back" } } or {}
-    for _, it in ipairs(list) do rows[#rows + 1] = it end
-    model.rows = rows
-    -- The labels make room for a picture only when there is one to show.
+-- Whether a list brings pictures: the rows make room for them only then.
+local function count_icons(rows)
     local with = 0
     for _, r in ipairs(rows) do
         if (r.icon or "") ~= "" then with = 1 break end
     end
-    fact.with_icons = with
+    return with
+end
+
+local function show(list)
+    model.rows = list
+    fact.with_icons = count_icons(list)
 end
 
 if not sys.watch("tray", function(list) model.icons = list end) then
@@ -34,21 +35,30 @@ on("menu", function(i)
         pcall(sys.call, "tray.context", it.key)
         return
     end
-    owner, root, path = it, menu, {}
+    owner = it
     show(menu)
+    fact.sub_open = false
     fact.menu_open = true
 end)
 
 on("choose", function(i)
     local r = model.rows[i + 1]
-    if r.back then
-        table.remove(path)
-        show(#path > 0 and path[#path].children or root)
-    elseif r.children and #r.children > 0 then
-        path[#path + 1] = r
-        show(r.children)
+    if not r then return end
+    if r.children and #r.children > 0 then
+        -- It has more inside: the submenu opens beside it, against that row.
+        model.sub = r.children
+        fact.sub_row = i
+        fact.sub_icons = count_icons(r.children)
+        fact.sub_open = true
     else
         sys.call("tray.menu_click", owner.key, r.id)
         fact.menu_open = false
     end
+end)
+
+on("pick", function(i)
+    local r = model.sub[i + 1]
+    if r then sys.call("tray.menu_click", owner.key, r.id) end
+    fact.sub_open = false
+    fact.menu_open = false
 end)

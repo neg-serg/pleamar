@@ -332,6 +332,20 @@ popup menu {
 
 A real surface, child of the main one: **it can go outside it** (a menu under a 44 px bar). What is inside is drawn with (0, 0) at its corner and it is scene like the rest: same springs, components, zones and rules, and `menu_open` is set and cleared from anywhere. If the system closes it —something outside was clicked—, the fact goes false and the logic hears about it (`fact:menu_open`). It goes at scene level, not inside a group. If it does not fit on the screen, the compositor slides it until it does.
 
+**A popup out of a popup.** `in: menu` makes it come out of another one —a submenu, beside the row it belongs to:
+
+```
+popup submenu {
+    in: menu                          // its `at:` is read inside that one, at (0, 0) its corner
+    at: 200, 8 + row * 30             // against the row it came from
+    size: 180, 16 + picks.height
+    open: sub_open
+    …
+}
+```
+
+The compositor places it over its parent and takes it away with it: a menu that closes takes its submenu with it, and the facts of both go false, so the logic hears it once. Its parent has to be a popup declared before it, at scene level.
+
 ## Images the logic picks
 
 ```

@@ -3020,6 +3020,23 @@ impl<'a> Compiler<'a> {
         let mut p = self.properties(n, vocab::properties("popup"))?;
         let missing = |q: &str| CompileError::at(n.line, n.col, format!("this `popup` is missing '{q}'"));
         let at = self.point(p.get_mut("at").ok_or_else(|| missing("at"))?)?;
+        // `in: menu`: it comes out of another popup, at that one's coordinates. Only one
+        // declared before it: the compositor places a popup when it is created, and the
+        // piece of the plane it paints on is handed out in reading order.
+        let parent = match p.get_mut("in") {
+            Some(q) => {
+                let from = q.id("the popup it comes out of")?;
+                match self.e.popups.iter().position(|e| e.name == from) {
+                    Some(k) => Some(k),
+                    None => {
+                        let known: Vec<&str> = self.e.popups.iter().map(|e| e.name).collect();
+                        let hint = if known.is_empty() { ": a `popup` with `in:` comes out of another one, and that one goes first".to_owned() } else { format!(": it can come out of {}", known.join(", ")) };
+                        return Err(CompileError::at(q.end.0, q.end.1, format!("there is no popup '{from}' declared before this one{hint}")));
+                    }
+                }
+            }
+            None => None,
+        };
         let size = self.point(p.get_mut("size").ok_or_else(|| missing("size"))?)?;
         let open = {
             let c = p.get_mut("open").ok_or_else(|| missing("open"))?;
@@ -3039,7 +3056,7 @@ impl<'a> Compiler<'a> {
         self.group(n.body.as_deref().unwrap_or(&[]).iter());
         self.under.pop();
         self.e.paint(Instr::Transform(None));
-        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin });
+        self.e.popups.push(Popup { name: interned(&name), open, at, size, origin, parent });
         Ok(())
     }
 

@@ -1,0 +1,15 @@
+// expect: error «there is no popup 'ghost' declared before this one»
+language 0.4
+// A popup that comes out of another one has to name one that is already there:
+// the compositor places it when it is created, in that one's coordinates.
+scene PopupIn {
+    surface { size: 200, 100 }
+    fact shown = true
+
+    popup menu {
+        in: ghost
+        at: 0, 0
+        size: 100, 100
+        open: shown
+    }
+}

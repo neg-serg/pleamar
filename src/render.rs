@@ -1183,19 +1183,31 @@ pub fn run(
                     }
                 }
                 ToRender::PopupClosed(k) => {
-                    // They have clicked outside: first what was painting in it is released, then it.
-                    sheets.retain(|l| l.view.popup != Some(k));
-                    crate::platform::popup(k, None);
+                    // A popup that goes takes with it what came out of it: the compositor
+                    // destroys those too, so their facts are put out here, deepest first.
+                    let mut gone = vec![k];
+                    let mut at = 0;
+                    while at < gone.len() {
+                        let from = gone[at];
+                        gone.extend(scene.popups.iter().enumerate().filter(|(_, p)| p.parent == Some(from)).map(|(j, _)| j));
+                        at += 1;
+                    }
+                    gone.sort_unstable();
+                    for j in gone.into_iter().rev() {
+                        // First what was painting in it is released, then it.
+                        sheets.retain(|l| l.view.popup != Some(j));
+                        crate::platform::popup(j, None, None);
+                        if let Some(open) = popups.get_mut(j) {
+                            *open = None;
+                        }
+                        if let Some(em) = scene.popups.get(j) {
+                            let h = em.open.0 as usize;
+                            facts[h] = 0.0;
+                            let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
+                        }
+                    }
                     if let Some(g) = &gpu {
                         assign_pace(g, &mut sheets, size, op.no_vsync);
-                    }
-                    if let Some(open) = popups.get_mut(k) {
-                        *open = None;
-                    }
-                    if let Some(em) = scene.popups.get(k) {
-                        let h = em.open.0 as usize;
-                        facts[h] = 0.0;
-                        let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
                     }
                 }
                 ToRender::ExternalFact(name, written) => match scene.facts.iter().position(|h| h.0 == name) {
@@ -3530,29 +3542,56 @@ pub fn run(
                 }
             }
         }
-        let open = |k: usize| scene.surfaces.get(k).and_then(|s| s.open.as_ref()).is_none_or(|e| e.is_true(Ctx { props: &props, facts: &facts, seen: None }));
+        // (Read from the facts it is given: a popup that goes puts its own out below.)
+        let open = |k: usize, facts: &[f32]| scene.surfaces.get(k).and_then(|s| s.open.as_ref()).is_none_or(|e| e.is_true(Ctx { props: &props, facts, seen: None }));
         draw.views.clear();
-        draw.views.extend(sheets.iter().filter(|l| open(l.view.surface)).map(|l| l.view.bounds()));
+        draw.views.extend(sheets.iter().filter(|l| open(l.view.surface, &facts)).map(|l| l.view.bounds()));
+        // What each one wants this frame: open while its fact is true, where and how
+        // its expressions say. A submenu waits for the popup it comes out of.
+        let wants: Vec<Option<[i32; 4]>> = scene
+            .popups
+            .iter()
+            .map(|em| {
+                let c = Ctx { props: &props, facts: &facts, seen: None };
+                let under = em.parent.is_none_or(|p| popups.get(p).is_some_and(|w| w.is_some()));
+                (facts[em.open.0 as usize] > 0.5 && !sheets.is_empty() && under).then(|| {
+                    [em.at.0.eval(c).round() as i32, em.at.1.eval(c).round() as i32, em.size.0.eval(c).round().max(1.0) as i32, em.size.1.eval(c).round().max(1.0) as i32]
+                })
+            })
+            .collect();
+        // What goes is let go from the last to the first: what came out of a popup
+        // goes before the popup itself. One that changed place or size is remade below.
+        let mut closed_any = false;
+        for k in (0..scene.popups.len()).rev() {
+            if popups[k].is_some() && wants[k] != popups[k] {
+                sheets.retain(|l| l.view.popup != Some(k));
+                crate::platform::popup(k, None, None);
+                popups[k] = None;
+                closed_any = true;
+                // A submenu whose menu went goes with it, and its fact too: it is not
+                // still out when that one comes back, and the logic hears it the once.
+                let em = &scene.popups[k];
+                let h = em.open.0 as usize;
+                if facts[h] > 0.5 && em.parent.is_some_and(|p| popups.get(p).is_none_or(|w| w.is_none())) {
+                    facts[h] = 0.0;
+                    let _ = to_logic.send(Event::Fact(scene.facts[h].0, 0.0));
+                }
+            }
+        }
         for (k, em) in scene.popups.iter().enumerate() {
-            let c = Ctx { props: &props, facts: &facts, seen: None };
-            let wants = (facts[em.open.0 as usize] > 0.5 && !sheets.is_empty()).then(|| {
-                [em.at.0.eval(c).round() as i32, em.at.1.eval(c).round() as i32, em.size.0.eval(c).round().max(1.0) as i32, em.size.1.eval(c).round().max(1.0) as i32]
-            });
-            if wants != popups[k] {
-                if popups[k].is_some() {
-                    sheets.retain(|l| l.view.popup != Some(k));
-                    crate::platform::popup(k, None);
-                    if let Some(g) = &gpu {
-                        assign_pace(g, &mut sheets, size, op.no_vsync);
-                    }
+            if popups[k].is_none() {
+                if let Some(g) = wants[k] {
+                    crate::platform::popup(k, em.parent, Some((g, em.origin)));
+                    popups[k] = wants[k];
                 }
-                if let Some(g) = wants {
-                    crate::platform::popup(k, Some((g, em.origin)));
-                }
-                popups[k] = wants;
             }
             if let Some(g) = popups[k] {
                 draw.views.push([em.origin.0, em.origin.1, em.origin.0 + g[2] as f32, em.origin.1 + g[3] as f32]);
+            }
+        }
+        if closed_any {
+            if let Some(g) = &gpu {
+                assign_pace(g, &mut sheets, size, op.no_vsync);
             }
         }
 
@@ -4241,7 +4280,7 @@ pub fn run(
         // everything stopped: 300 ms in the middle of an animation of another window.
         let mut open_changed = false;
         for l in &mut sheets {
-            let is_open = l.view.popup.is_some() || open(l.view.surface);
+            let is_open = l.view.popup.is_some() || open(l.view.surface, &facts);
             open_changed |= is_open != l.open;
             if is_open {
                 l.cleared = false;

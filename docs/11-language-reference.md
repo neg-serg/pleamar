@@ -541,7 +541,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `passive` · `show` · `label` · `agent` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · `z` (see below) · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
-| `popup` | `at` (inside the surface) · `size` · `open:` a fact |
+| `popup` | `at` (inside the surface, or inside the popup it comes out of) · `size` · `open:` a fact · `in:` the popup it comes out of (`in: menu`: a submenu, placed in that one's coordinates and gone with it) |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 | `grid` | `at` · `columns` · `width` · `gap` · `row` (the height of every row) · `show` · `opacity`; and on its children, `span`. What it is: below |
 
@@ -1763,7 +1763,7 @@ properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret passive show label agent
 properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode shader
-properties.popup: at size open
+properties.popup: at size open in
 properties.children: move
 properties.grid: at columns gap width row show opacity
 properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step content wrap size grow

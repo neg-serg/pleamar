@@ -280,16 +280,17 @@ pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, Stri
 }
 
 /// Opens or closes the scene's popup number `k`: a child surface of the
-/// main one, at `[x, y, width, height]` inside it, that shows the scene
-/// from `origin`. The sheet reaches the render like the others; if the system
+/// main one —or of popup `parent`, when it comes out of another one—, at
+/// `[x, y, width, height]` inside it, that shows the scene from `origin`. The sheet
+/// reaches the render like the others; if the system
 /// closes it (someone clicked outside), it reports with `ToRender::PopupClosed`.
 ///
-/// On Wayland, an `xdg_popup`. On Windows it will be a frameless window with
-/// `WS_EX_NOACTIVATE`; on macOS, an `NSPanel`.
-pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
+/// On Wayland, an `xdg_popup`, nested in its parent's when it has one. On Windows it
+/// will be a frameless window with `WS_EX_NOACTIVATE`; on macOS, an `NSPanel`.
+pub fn popup(k: usize, parent: Option<usize>, what: Option<([i32; 4], (f32, f32))>) {
     #[cfg(target_os = "linux")]
-    wayland::popup(k, what);
-    let _ = (k, what);
+    wayland::popup(k, parent, what);
+    let _ = (k, parent, what);
 }
 
 /// Engages or releases the session lock for surface `which`, which is

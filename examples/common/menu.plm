@@ -10,12 +10,13 @@ import "palette.plm"
 //  `strict`: its components only read what they ask for, what they declare and the palette's.
 library Menu strict {
     component MenuRow(r: record, chosen: event, with_icons: number = 0, tone: color = mint, width: number = 220) {
-        size: width, 30 - r.separator * 21
+        size: width, 30
         prop on = 0 ~quick
-        box hit { from: 0, 0; size: width, 30 - r.separator * 21; corner: 7; color: tone
+        box hit { from: 0, 0; size: width, 30; corner: 7; color: tone
                   opacity: on * 20%; cursor: pointer; active: r.enabled and not r.separator }
-        //  A separator's stripe.
-        box { from: 6, 4; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
+        //  A separator's stripe, across the middle of a row like any other: rows are all
+        //  the same height, which is what lets a submenu line up with its own row.
+        box { from: 6, 15; size: width - 12, 1; color: ink; opacity: r.separator * 14% }
         //  The row's own picture, in the column the labels make room for.
         image r.icon { at: 10, 7; size: 16, 16; opacity: (1 - r.separator) * (0.45 + r.enabled * 0.55) }
         text r.label { at: 12 + with_icons * 22, 15; anchor: left center; size: 13.5; width: width - 50 - with_icons * 22; lines: 1; color: ink

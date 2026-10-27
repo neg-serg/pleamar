@@ -2137,10 +2137,14 @@ pub struct Popup {
     /// It is open while this fact is true. If the system closes it
     /// (someone clicked outside), the render sets it to false.
     pub open: FactId,
-    /// Where it comes out, inside the main surface; and how big it is.
+    /// Where it comes out, inside the one it comes out of —the main surface, or
+    /// another popup (see `parent`)—; and how big it is.
     pub at: (Expr, Expr),
     pub size: (Expr, Expr),
     pub origin: (f32, f32),
+    /// The popup this one comes out of (`in:`), if any: its `at:` is read in that
+    /// one's coordinates, and it goes away with it. Only one declared before it.
+    pub parent: Option<usize>,
 }
 
 /// What this scene's logic can touch of the system. **Undeclared,
